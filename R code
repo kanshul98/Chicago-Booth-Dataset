@@ -1,0 +1,178 @@
+install.packages("purrr")
+
+library(tidyverse)
+library(readxl)
+library(purrr)
+library(ggplot2)
+library(writexl)
+getwd()
+
+child_data <- read.csv("/Users/anshulkandpal/Downloads/be_dataset/childdata.csv")
+guard_data <- read.csv("/Users/anshulkandpal/Downloads/be_dataset/guardiandata.csv")
+
+str(child_data)
+str(guard_data)
+
+view(child_data)
+view(guard_data)
+
+# we put all the datapoints which were only collected in baseline (eg, endline = 0) in this variable
+baseline_child_data <- child_data %>% 
+  filter(endline == 0)
+
+
+# mean and standard deviation of all the cognitive scores for treatment and control group
+baseline_child_data %>% 
+  group_by(treatment) %>% 
+  summarise(
+    N = n(),
+    across(c(age, qmat, bug, picture_mem, vocab, anim_code, receptive_vocab, pict_naming, 
+             aser_math, aser_kannada, motor_skills, body_parts, colors, dial_num, actions, 
+             alpha, prob_solve, copying, panamath, c_totalscore_all), 
+           list(mean = ~mean(.x, na.rm = TRUE), sd = ~sd(.x, na.rm = TRUE)))
+  ) %>% view()
+
+
+# Define the variables for t-tests
+test_vars <- c("age", "qmat", "bug", "picture_mem", "vocab", "anim_code", "receptive_vocab", 
+               "pict_naming", "aser_math", "aser_kannada", "motor_skills", "body_parts", 
+               "colors", "dial_num", "actions", "alpha", "prob_solve", "copying", "panamath", "c_totalscore_all")
+
+# Function to run t-test and extract key results
+run_t_test <- function(var) {
+  t_result <- t.test(baseline_child_data[[var]] ~ baseline_child_data$treatment, var.equal = TRUE)
+  
+  data.frame(
+    Variable = var,
+    Mean_Control = mean(baseline_child_data[[var]][baseline_child_data$treatment == 0], na.rm = TRUE),
+    Mean_Treatment = mean(baseline_child_data[[var]][baseline_child_data$treatment == 1], na.rm = TRUE),
+    p_value = t_result$p.value
+  )
+}
+
+# Apply the function to all variables and store results in a dataframe
+t_test_results <- map_dfr(test_vars, run_t_test)
+
+# View results
+print(t_test_results)
+# OR
+view(t_test_results)
+
+
+
+
+
+# Now we tackle table pointer 2: "2.	Please calculate the percentage of guardians-
+# -who disagree about the type of primary school they are planning for their children"
+
+guard_data %>% 
+  group_by(prim_type) %>% 
+  summarise(
+    N = n()
+  )
+
+# since we have 1776 '-99' values which are only used in endline, we clean this prim_type data
+# we basically don't need '-99' values for this analysis
+
+clean_guard_data <- guard_data %>% 
+  filter(prim_type %in% c("Private" , "Public"))
+
+view(clean_guard_data)
+
+disagreement_data <- clean_guard_data %>% 
+  group_by(id_child) %>% 
+  summarise(
+    unique_schools = n_distinct(prim_type)
+  ) #in this command box, you basically count the unique preferences for schools for each child by their guardian, and increase count by 1 for each uniqueness..
+# .. therefore, if there is uniqueness of 2, it means both guardians had a disagreement. Similary uniqueness of 1 means agreement
+
+view(disagreement_data)
+
+n_disagreements <- sum(disagreement_data$unique_schools == 2) # add up whenever there is a disagreement (unique schools = 2)
+print(n_disagreements) #print the count of disagreements amongst guardians
+
+total_children <- n_distinct(clean_guard_data$id_child)
+print(total_children)
+
+percentage_disagree <- (n_disagreements / total_children) * 100 # using the formula of (disagreements/total) * 100
+print(percentage_disagree)
+
+
+
+# Now we tackle Pointer 3: "Please graph the distributions of the total score variable at baseline and endline by treatment status and interpret the graph"
+
+# Scatterplot
+child_data %>% 
+  ggplot(aes(x = c_totalscore_all, fill = factor(treatment))) +
+  geom_density(alpha = 0.5) +
+  facet_wrap(~ endline, labeller = labeller(endline = c("0" = "Baseline", "1" = "Endline"))) +
+  labs(title = "Total Score Distribution by Treatment Status",
+       x = "Total Score",
+       y = "Density",
+       fill = "Group") +
+  scale_fill_manual(values = c("0" = "blue", "1" = "red"),
+                    labels = c("0" = "Control", "1" = "Treatment")) +
+  theme_minimal()
+
+# Boxplot
+child_data %>% 
+  ggplot(aes(x = factor(treatment), y = c_totalscore_all, fill = factor(treatment))) +
+  geom_boxplot(alpha = 0.5) +
+  facet_wrap(~ endline, labeller = labeller(endline = c("0" = "Baseline", "1" = "Endline"))) +
+  labs(title = "Total Score Distribution by Treatment Status",
+       x = "Group",
+       y = "Total Score",
+       fill = "Group") +
+  scale_fill_manual(values = c("0" = "blue", "1" = "red"),
+                    labels = c("0" = "Control", "1" = "Treatment")) +
+  theme_minimal()
+
+
+# OK, now we work on the 4th topic: "4.	Please group the subtests thematically and create z-score...results in a few sentences."
+
+# the themes have been made as following:
+#   1. cognitive/non-verbal reasoning: qmat,bug search, picture memory, problem solving, panamath
+#   2. language/verbal skills: vocabulary, receptive vocab, picture naming, alphabets, actions
+#   3. quantitative(early academics): ASER math, DIAL number, ASER kannada
+#   4. motor/visual motor/early concepts: animal coding, motor skills, copying, body parts, colors
+
+# Compute z-scores for each theme and take the row-wise mean
+child_data$cognitive_index <- rowMeans(scale(child_data[, c("qmat", "bug", "picture_mem", "prob_solve", "panamath")]), na.rm = TRUE)
+child_data$language_index <- rowMeans(scale(child_data[, c("vocab", "receptive_vocab", "pict_naming", "alpha", "actions")]), na.rm = TRUE)
+child_data$quant_index <- rowMeans(scale(child_data[, c("aser_math", "dial_num", "aser_kannada")]), na.rm = TRUE)
+child_data$motor_index <- rowMeans(scale(child_data[, c("anim_code", "motor_skills", "copying", "body_parts", "colors")]), na.rm = TRUE)
+
+
+
+# first, we filter the guardian_data for females only
+female_guard_data <- guard_data %>% 
+  filter(gender == "Female")
+view(female_guard_data)
+
+# now, we join the female guardian data and child data together, through left_joining via child_id to make a composite analysis table
+analysis_table <- merge(female_guard_data, child_data)
+
+# now we remove all the redundancies from analysis table
+analysis_table <- analysis_table %>% 
+  select(-qmat, -bug, -picture_mem, -vocab, -anim_code, 
+         -receptive_vocab, -pict_naming, -aser_math, -aser_kannada, 
+         -motor_skills, -body_parts, -colors, -dial_num, 
+         -actions, -alpha, -prob_solve, -copying, -panamath, -hoursworked, -prim_type)
+view(analysis_table)
+
+
+# NOTE: FOR THIS FINAL ANALYSIS, I EXTRACTED THE DATA AND RE-ARRANGED IT IN EXCEL TO FACILITATE THE ANALYSIS
+# I filtered baseline and endline cognitive scores accoridngly and put them side-by-side
+# The final_analysis sheet is provided with the script
+
+view(final_analysis)
+
+model_cognitive_index <- lm(cognitive_index_end ~ cognitive_index_base + age + edu + treatment, data = final_analysis)
+model_language_index <- lm(language_index_end ~ language_index_base + age + edu + treatment, data = final_analysis)
+model_quantitative_index <- lm(quant_index_end ~ quant_index_base + age + edu + treatment, data = final_analysis)
+model_motor_index <- lm(motor_index_end ~ motor_index_base + age + edu + treatment, data = final_analysis)
+
+summary(model_cognitive_index)
+summary(model_language_index)
+summary(model_quantitative_index)
+summary(model_motor_index)
